@@ -1,0 +1,21 @@
+Tested on : https://azure.microsoft.com/en-us/services/cognitive-services/text-analytics/
+
+Tweet 1:
+https://twitter.com/TriadBizJournal/status/1230990718140846080
+Triad Business Journal
+@TriadBizJournal
+#NCA&T will host a dedication #ceremony to officially name its College of Business and Economics in honor of former #Merck executive and 1977 alumni Willie Deese.
+
+ 98% netural
+ 
+ Tweet 2:
+ https://twitter.com/INTOUCHINTEL/status/1230416952897699841
+ InTouch Intelligence
+@INTOUCHINTEL
+#Merck #animalhealth's #vaccine for #piglets wins best new product award | InTouch Inteliigence
+http://bit.ly/VaccinePiglets-Merck
+
+Visit http://intouch-intelligence.com for more news and subscribe to our free newsletter!
+
+78% netural
+

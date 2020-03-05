@@ -1,0 +1,8 @@
+boto3==1.11.16
+Flask==1.0.2
+Flask-Cors==3.0.8
+flask-testing==0.7.1
+psycopg2-binary==2.8.4
+PyJWT==1.7.1
+requests==2.18.4
+SQLAlchemy==1.2.7
