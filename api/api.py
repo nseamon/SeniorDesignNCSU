@@ -12,6 +12,7 @@ import db
 
 from auth import validatePassword
 from geoProximity import inRangeOfMerckFacility
+from kwFilter import filterText
 from models import RawTextEntry, ProcessedTextEntry, User
 from settings import SOURCES, JWT_SECRET, CREATE_ACCOUNT_CODE
 
@@ -132,13 +133,13 @@ def getRawText():
     
     # no specified range, return all
     else:
-        rawEntries = session.query(RawTextEntry)
+        rawEntries = session.execute(select([RawTextEntry]))
 
     # close db session
     session.close()
-    
+
     # make list to return
-    entries= []
+    entries = []
 
     for entry in rawEntries:
         
@@ -183,7 +184,7 @@ def postProcessedTextEntry():
     session = db.Session()
     if not session.execute(select([RawTextEntry]).where( RawTextEntry.id == req['raw'])).first():
          session.close()
-         return buildResponse(json.dumps("Missing parameter source"), 400)
+         return buildResponse(json.dumps("Source ID does not exist"), 400)
     session.close()
 
    
@@ -194,7 +195,7 @@ def postProcessedTextEntry():
     # confirm time in format YYYY-DD-MM HH:MM:SS
     else:
         time = req['time']
-        regex = re.compile("^([2])\d\d\d-([0-9][0-2])-(3[0-1]|[0-2][0-9]) ([0][0-9]|1[0-9]|2[0-3]):([0-5][0-9]):([0-5][0-9])$")
+        regex = re.compile("^([2])\d\d\d-(3[0-1]|[0-2][0-9])-([0-2][0-9]|3[0-1]) ([0][0-9]|1[0-9]|2[0-3]):([0-5][0-9]):([0-5][0-9])$")
         if not regex.match(time):
             return buildResponse(json.dumps("Invalid time format, must be YYYY-DD-MM HH:MM:SS"), 400)
 
@@ -242,7 +243,7 @@ def getProcessedText():
     
     # none specified, return all
     else:
-        pEntries = session.query(ProcessedTextEntry)
+        pEntries = session.execute(select([ProcessedTextEntry]))
 
     session.close()
     entries= []
@@ -251,7 +252,9 @@ def getProcessedText():
     for entry in pEntries:
 
         # get raw entry by id
+        session = db.Session()
         raw = session.execute(select([RawTextEntry]).where( RawTextEntry.id == entry.raw)).first()
+        session.close()
         
         if not raw:
             continue
@@ -294,14 +297,15 @@ def deleteProcessedText():
     session = db.Session()
     raw_id = session.execute(select([ProcessedTextEntry]).where( ProcessedTextEntry.id == args['id'])).first()['raw']
 
-    # close session
-    session.close()
-
     # deletes processed entry
-    db.engine.execute("DELETE FROM \"ProcessedTextEntries\" where id={};".format(args['id']))
+    session.delete(session.query(ProcessedTextEntry).filter(ProcessedTextEntry.id ==  args['id']).first())
 
     #deletes the raw entry for the processed entry specified
-    db.engine.execute("DELETE FROM \"RawTextEntries\" where id={};".format(raw_id))
+    session.delete(session.query(RawTextEntry).filter(RawTextEntry.id == raw_id).first())
+
+    # close session
+    session.commit()
+    session.close()
 
     return buildResponse(body=json.dumps({"message": "Success"}), status=200)
 
@@ -321,8 +325,10 @@ def deleteRawText():
         return buildResponse(body=json.dumps({"message": "no id specified"}), status=400)
     
     # delete specified object
-    db.engine.execute("DELETE FROM \"RawTextEntries\" where id={};".format(args['id']))
-
+    session = db.Session()
+    session.delete(session.query(RawTextEntry).filter(RawTextEntry.id == args['id']).first())
+    session.commit()
+    session.close()
     return buildResponse(body=json.dumps({"message": "Success"}), status=200)
 
 
@@ -346,6 +352,9 @@ def instantProcessing():
         return response
     
     raw_entry = db.getRaw(request.json['time'], request.json['raw_text'])
+
+    if not filterText(request.json['raw_text']):
+        return buildResponse(body=json.dumps({"message": "Not related to Merck or its interests"}), status=200)
 
     analyzer = vaderSentiment.SentimentIntensityAnalyzer()
     sentiment =  analyzer.polarity_scores(request.json['raw_text'])

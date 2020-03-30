@@ -2,12 +2,15 @@ import http.client
 import json
 import os
 import sqlalchemy
+import sys
 import time
 import unittest, urllib
 
 from flask import Flask, request, Response
 from flask_cors import CORS
 from flask_testing import TestCase
+
+sys.path.append('..')
 
 import app
 import db

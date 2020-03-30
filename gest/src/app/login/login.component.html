@@ -1,0 +1,42 @@
+<div class="login-dark" style="margin-top:83px;">
+    <!--<div class="flip-card">-->
+            <div> <!--class="flip-card-inner"-->
+            <!--<div class="flip-card-front">-->
+                <form method="post" style="background-color: rgb(255,255,255); margin-top: 200px;">
+                    <h2 class="sr-only">Login Form</h2>
+                    <div class="illustration"><i class="icon ion-ios-locked-outline" style="color: #000000;"></i></div>
+                    <div class="form-group"><input class="form-control" [(ngModel)]="username" type="username" name="username" placeholder="Username"></div>
+                    <div class="form-group"><input class="form-control" [(ngModel)]="password" type="password" name="password" placeholder="Password"></div>
+                    <div class="form-group"><button class="btn btn-primary btn-block" (click)="login()" id="login" type="submit" style="background-color: #000000;">Log In</button></div><a class="forgot" href="#">Forgot your email or password?</a> <!--[routerLink]="['/']"-->
+                    <div class="form-group" id="loginError" *ngIf="loginError">{{loginError}}</div>
+                </form>
+                    <!--</div> -->
+            <!--<div class="flip-card-back">
+                    <form method="post" style="margin-top: 200px;">
+                        <h2 class="text-center"><strong>Create</strong> an account.</h2>
+                        <div class="form-group"><input class="form-control" type="email" name="email" placeholder="Email" /></div>
+                        <div class="form-group"><input class="form-control" type="password" name="password" placeholder="Password" /></div>
+                        <div class="form-group"><input class="form-control" type="password" name="password-repeat" placeholder="Password (repeat)" /></div>
+                        <div class="form-group">
+                            <div class="form-check"><label class="form-check-label"><input class="form-check-input" type="checkbox" />I agree to the license terms.</label></div>
+                        </div>
+                        <div class="form-group"><button class="btn btn-primary btn-block" type="submit" style="background-color: #000000;">Sign Up</button></div><a class="already" href="#">You already have an account? Login here.</a></form>
+            </div> -->
+        <!--</div> -->
+    </div>
+    
+</div>
+<form method="post" style="margin-top: 200px;">
+    <h2 class="text-center"><strong>Create</strong> an account.</h2>
+    <div class="form-group"><input class="form-control" [(ngModel)]="newUsername" type="username" name="newUsername" placeholder="Username" /></div>
+    <div class="form-group"><input class="form-control" [(ngModel)]="newEmail" type="email" name="newEmail" placeholder="Email" /></div>
+    <div class="form-group"><input class="form-control" [(ngModel)]="verifyKey" type="verification" name="verification" placeholder="Verification Key" /></div>
+    <div class="form-group"><input class="form-control" [(ngModel)]="newPassword" type="password" name="newPassword" placeholder="Password" /></div>
+    <div class="form-group"><input class="form-control" type="password" name="password-repeat" placeholder="Password (repeat)" /></div>
+    <div class="form-group">
+        <div class="form-check"><label class="form-check-label"><input class="form-check-input" type="checkbox" />I agree to the license terms.</label></div>
+    </div>
+    <div class="form-group" id="register" *ngIf="registerMsg">{{registerMsg}}</div>
+    <div class="form-group"><button class="btn btn-primary btn-block" (click)="createAccount()" type="submit" name="signup" style="background-color: #000000;">Sign Up</button></div>
+    <a class="already" href="#">You already have an account? Login here.</a>
+</form>

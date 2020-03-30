@@ -6,3 +6,5 @@ psycopg2-binary==2.8.4
 PyJWT==1.7.1
 requests==2.18.4
 SQLAlchemy==1.2.7
+vaderSentiment==3.3.1
+werkzeug==0.16.1

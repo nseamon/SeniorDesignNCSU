@@ -74,7 +74,7 @@ img, svg {
 }
 
 .portfolio-block.website.gradient {
-  background: linear-gradient(120deg,#fff3f3,#ffbc0e);
+  background: linear-gradient(120deg,#68edff,#0e51ff);
 }
 
 @media (max-width: 990px) {

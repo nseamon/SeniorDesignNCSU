@@ -1,0 +1,33 @@
+<div style="margin-top:88px">
+    <div class="container">
+        
+        <li *ngFor="let data of storedThreats">
+            <div class="card">
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col">
+                            <h4 class="float-left">{{data.raw.author}}</h4>
+                        </div>
+                        <div class="col">
+                            <h6 class="float-right">{{data.raw.time}}</h6>
+                        </div>    
+                    </div>
+                    <div class="row">
+                        <div class="col">
+                             <p class="card-text">{{data.raw.raw_text}}</p>
+                        </div>
+                    </div>
+                    <div class="row" style="padding-top:10px;">
+                        <div class="col">
+                            <h6 style="float: left;">{{data.raw.source}}</h6>
+                        </div>
+                        <div class="col-lg-3">
+                            <button class="dismiss">Dismiss</button>
+                            <button class="myButton">Send Alert</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </li>
+    </div>
+</div>
