@@ -1,0 +1,26 @@
+<div class="login-dark" style="margin-top:83px;">
+<div class="scene scene--card">
+    <div class="card">
+      <div class="card__face card__face--front">
+        <form method="post" style="background-color: rgb(255,255,255); margin-top: 500px;">
+            <h2 class="sr-only">Login Form</h2>
+            <div class="illustration"><i class="icon ion-ios-locked-outline" style="color: #000000;"></i></div>
+            <div class="form-group"><input class="form-control" [(ngModel)]="username" type="username" name="username" placeholder="Username"></div>
+            <div class="form-group"><input class="form-control" [(ngModel)]="password" type="password" name="password" placeholder="Password"></div>
+            <div class="form-group"><button class="btn btn-primary btn-block" (click)="login()" id="login" type="submit" style="background-color: #000000;">Log In</button></div><a class="forgot" (click)="flipcard()" href="#create">Create a new account</a> <!--[routerLink]="['/']"-->
+            <div class="form-group" id="loginError" *ngIf="loginError">{{loginError}}</div>
+        </form>
+      </div>
+      <div class="card__face card__face--back">
+        <form method="post" style="margin-top: 500px;">
+            <h2 class="text-center" style="color: white"><strong>Create</strong> an account.</h2>
+            <div class="form-group" style="color: white"><input class="form-control" [(ngModel)]="newUsername" type="username" name="newUsername" placeholder="Username" /></div>
+            <div class="form-group" style="color: white"><input class="form-control" [(ngModel)]="newEmail" type="email" name="newEmail" placeholder="Email" /></div>
+            <div class="form-group" style="color: white"><input class="form-control" [(ngModel)]="verifyKey" type="verification" name="verification" placeholder="Verification Key" /></div>
+            <div class="form-group" style="color: white"><input class="form-control" [(ngModel)]="newPassword" type="password" name="newPassword" placeholder="Password" /></div>
+            <div class="form-group" style="color: white"><input class="form-control" [(ngModel)]="repeatPassword" type="password" name="password-repeat" placeholder="Password (repeat)" /></div>
+            <div class="form-group"><button class="btn btn-primary btn-block" name="signup" type="submit" style="background-color: #000000;" (click)="createAccount()">Sign Up</button></div><a class="already" style="color: white" (click)="flipcard()">You already have an account? Login here.</a></form>
+      </div>
+    </div>
+</div>
+</div>
