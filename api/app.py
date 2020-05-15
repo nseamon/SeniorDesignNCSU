@@ -2,7 +2,7 @@ import json
 
 from flask import Flask, request, Response
 from flask_cors import CORS
-
+import smtplib, ssl
 import api
 import db
 
@@ -13,7 +13,6 @@ CORS(application)
 
 
 @application.route("/healthstatus", methods=['GET'])
-@api.requires_auth
 def getHealthStatus():
 	"""
 	GET healthstatus endpoint. Confirms db connectivity
@@ -88,8 +87,8 @@ def getProcessedTextEntries():
 
 	:return: response object with processed entry list
 	"""
-
 	return api.getProcessedText()
+
 
 @application.route("/deleteProcessedTextEntry", methods=['DELETE'])
 @api.requires_auth
@@ -152,6 +151,27 @@ def createAccount():
 	"""
 	return api.createAccount()
 
+
+@application.route("/email", methods=['POST'])
+@api.requires_auth
+def email():
+	"""
+	Creates email alert
+
+	:return: response object 
+	"""
+	return api.email()
+
+
+@application.route("/csv", methods=['POST'])
+@api.requires_auth
+def uploadCSV():
+	"""
+	Upload CSV
+
+	:return: response object 
+	"""
+	return api.upload_csv()
 
 # runs app
 if __name__ == '__main__':

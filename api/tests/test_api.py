@@ -5,24 +5,29 @@ import sqlalchemy
 import sys 
 import time
 import unittest, urllib
+import flask
 
 from flask import Flask, request, Response
 from flask_testing import TestCase
 
 sys.path.append('..')
 
-import app
+from app import application
 import db
 import models
+import api
 
 from db import engine
 
-# port and host for API during testing
-PORT = 5000
-HOST = 'localhost'
 
-# used to limit timing related test errors
-SLEEP_TIME = .005
+"""
+How to Get Coverage
+python -m coverage run <file>
+python -m coverage report
+python -m coverage html (outputs coverage stats in html files for each file covered)
+
+"""
+
 
 class TestAPI(TestCase):
     """
@@ -35,13 +40,11 @@ class TestAPI(TestCase):
         """
         Creates app for testing
         """
-        app = Flask(__name__)
-        return app
+        return application 
 
 
     def addUser(self):   
         headers = {'Content-type': 'application/json'}
-        conn = http.client.HTTPConnection(HOST, PORT)
         
         data = {
             "username": "ndseamon",
@@ -51,13 +54,11 @@ class TestAPI(TestCase):
         }
 
         json_data = json.dumps(data)
-        conn.request('POST', '/createAccount', json_data, headers)
-        conn.close()
+        self.client().post('/createAccount', headers=headers, data=json_data)
 
 
     def login(self):
         headers = {'Content-type': 'application/json'}
-        conn = http.client.HTTPConnection(HOST, PORT)
 
         body = {
             "username": "ndseamon",
@@ -65,11 +66,9 @@ class TestAPI(TestCase):
         }
 
         json_data = json.dumps(body)
-        conn.request('POST', '/login', json_data, headers)
-        response = conn.getresponse()
+        response =  self.client().post('/login', headers=headers, data=json_data)
+        token =  response.json['token']
 
-        token =  json.loads(response.read().decode('utf-8'))['token']
-        conn.close()
         return token
 
 
@@ -78,6 +77,9 @@ class TestAPI(TestCase):
         Deletes and recreates new blank tables so that testing is idempotent
         Creates a user and logs the user in to generate session token
         """
+        self.app = self.create_app()
+        self.client = self.app.test_client
+
         time.sleep(.01)
         models.Base.metadata.drop_all(engine)
 
@@ -90,53 +92,13 @@ class TestAPI(TestCase):
         time.sleep(.01)
         self.TOKEN = self.login()
 
-
-    def request(self, body, endpoint, method):
-        """
-        Method used to cut down on duplicated code. Takes parameters to make request 
-        and returns the http response. Includes Auth
-
-        :param: body of request
-        :param: string value of endpoint to use
-        :param: http method used (ie POST)
-        :return: http response object
-        """
+    
+    def post(self, endpoint, body):
         headers = {'Content-type': 'application/json', 'Authorization': "Bearer " + self.TOKEN}
-        conn = http.client.HTTPConnection(HOST, PORT)
-        conn.request(method, endpoint, json.dumps(body), headers)
-        response = conn.getresponse()
-        conn.close()
-        
-        return response
+        return self.client().post(endpoint, headers=headers, data=body)
 
 
     def requestWithQueryParams(self, endpoint, method, query_params=None):
-        """
-        Method used to cut down on duplicated code. Takes parameters to make request 
-        and returns the http response. Includes Auth
-
-        :param: body of request
-        :param: string value of endpoint to use
-        :param: query param (list of tuples)
-        :return: http response object
-        """
-        if query_params:
-            if method == "DELETE":
-                endpoint = endpoint + "?" + query_params[0][0] + "=" + query_params[0][1]
-            else:
-                endpoint = endpoint + "?"
-                for item in query_params:
-                    endpoint = endpoint + item[0] + "=" + item[1] + "&"
-
-        headers = {'Content-type': 'application/json', 'Authorization': "Bearer " + self.TOKEN}
-        conn = http.client.HTTPConnection(HOST, PORT)
-        conn.request(method, endpoint, headers=headers)
-        response = conn.getresponse()
-        conn.close()
-        
-        return response
-    
-    def getWithQueryParamsNoAuth(self, endpoint, query_params=None):
         """
         Method used to cut down on duplicated code. Takes parameters to make request 
         and returns the http response. Includes Auth
@@ -151,31 +113,12 @@ class TestAPI(TestCase):
             for item in query_params:
                 endpoint = endpoint + item[0] + "=" + item[1] + "&"
 
-        headers = {'Content-type': 'application/json'}
-        conn = http.client.HTTPConnection(HOST, PORT)
-        conn.request("GET", endpoint, headers=headers)
-        response = conn.getresponse()
-        conn.close()
-        
-        return response
+        headers = {'Content-type': 'application/json', 'Authorization': "Bearer " + self.TOKEN}
 
-    def requestNoAuth(self, body, endpoint, method):
-        """
-        Method used to cut down on duplicated code. Takes parameters to make request 
-        and returns the http response. Does not include auth
-
-        :param: body of request
-        :param: string value of endpoint to use
-        :param: http method used (ie POST)
-        :return: http response object
-        """
-        headers = {'Content-type': 'application/json'}
-        conn = http.client.HTTPConnection(HOST, PORT)
-        conn.request(method, endpoint, json.dumps(body), headers=headers)
-        response = conn.getresponse()
-        conn.close()
-        
-        return response
+        if method == "DELETE":
+            return self.client().delete(endpoint, headers=headers)
+        elif method == "GET":
+            return self.client().get(endpoint, headers=headers)
 
 
 """
@@ -184,6 +127,9 @@ This section tests raw text entry posts, delete and get functions
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 """
 class TestRawPostAndGetRaw(TestAPI):
+    """
+    Test raw entries
+    """
     
     VALID_RAW_BODY = {
         
@@ -201,7 +147,7 @@ class TestRawPostAndGetRaw(TestAPI):
         "source": "TWITTER",
         "lat": "56.3304",
         "lon": "130.3221",
-        "author": "Andrew Goncharov"
+        "author": "Andrew Goncharov",
     }
 
     VALID_RAW_BODY_THREE = {
@@ -229,9 +175,10 @@ class TestRawPostAndGetRaw(TestAPI):
         """ 
         Test valid raw text entry post 
         """
-        response = self.request(self.VALID_RAW_BODY, "/rawTextEntry", "POST")
-        self.assertEqual(json.loads(response.read().decode('utf-8')), "Raw entry successfully added")
-        self.assertEqual(200, response.status)
+        response =  self.post('/rawTextEntry', json.dumps(self.VALID_RAW_BODY))
+
+        self.assertEqual(response.json, "Raw entry successfully added")
+        self.assertEqual(200, response.status_code)
 
 
     def testPostRawTextEntryDuplicate(self):
@@ -240,18 +187,18 @@ class TestRawPostAndGetRaw(TestAPI):
         """
 
         # first post
-        response = self.request(self.VALID_RAW_BODY, "/rawTextEntry", "POST")
+        response = self.post('/rawTextEntry', json.dumps(self.VALID_RAW_BODY))
         
         # first post sanity check
-        self.assertEqual(json.loads(response.read().decode('utf-8')), "Raw entry successfully added")
-        self.assertEqual(200, response.status)
+        self.assertEqual(response.json, "Raw entry successfully added")
+        self.assertEqual(200, response.status_code)
         
         # second post
-        response = self.request(self.VALID_RAW_BODY, "/rawTextEntry", "POST")
+        response = self.post('/rawTextEntry', json.dumps(self.VALID_RAW_BODY))
         
         # second post failure verification
-        self.assertEqual(json.loads(response.read().decode('utf-8')), "Text entry with time and text already exists")
-        self.assertEqual(400, response.status)
+        self.assertEqual(response.json, "Text entry with time and text already exists")
+        self.assertEqual(400, response.status_code)
 
 
     def testPostRawInvalidDatetime(self):
@@ -268,11 +215,30 @@ class TestRawPostAndGetRaw(TestAPI):
             "author": "Donald Trump"
         }
 
-        response = self.request(body, "/rawTextEntry", "POST")
+        response = self.post("rawTextEntry", json.dumps(body))
         
-        self.assertEqual(json.loads(response.read().decode('utf-8')), "Invalid time format, must be YYYY-DD-MM HH:MM:SS")
-        self.assertEqual(400, response.status)
+        self.assertEqual(response.json, 'Invalid time format, must be YYYY-DD-MM HH:MM:SS')
+        self.assertEqual(400, response.status_code)
 
+
+    def testPostRawNoAuthor(self):
+        """
+        Tests valid raw text entry post with a bad url
+        """
+        
+        body = {
+            "raw_text": "I love Merck", 
+            "time": "2020-26-02 15:34:00", 
+            "source": "TWITTER",
+            "lat": "56.3304",
+            "lon": "130.3221",
+            "url": "bad url"
+        }
+
+        response = self.post("rawTextEntry", json.dumps(body))
+        
+        self.assertEqual(response.json, "Invalud url. Must start with http or https")
+        self.assertEqual(400, response.status_code)
 
     def testPostRawNoAuthor(self):
         """
@@ -287,10 +253,10 @@ class TestRawPostAndGetRaw(TestAPI):
             "lon": "130.3221",
         }
 
-        response = self.request(body, "/rawTextEntry", "POST")
+        response = self.post("rawTextEntry", json.dumps(body))
         
-        self.assertEqual(json.loads(response.read().decode('utf-8')), "Raw entry successfully added")
-        self.assertEqual(200, response.status)
+        self.assertEqual(response.json, "Raw entry successfully added")
+        self.assertEqual(200, response.status_code)
 
 
     def testInvalidLatLon(self):
@@ -306,10 +272,10 @@ class TestRawPostAndGetRaw(TestAPI):
             "lat": "56.3304",
         }
 
-        response = self.request(body, "/rawTextEntry", "POST")
+        response = self.post("rawTextEntry", json.dumps(body))
         
-        self.assertEqual(json.loads(response.read().decode('utf-8')), "Missing parameter lon")
-        self.assertEqual(400, response.status)
+        self.assertEqual(response.json, "Missing parameter lon")
+        self.assertEqual(400, response.status_code)
 
         # missing lat
         body = {
@@ -319,10 +285,10 @@ class TestRawPostAndGetRaw(TestAPI):
             "lon": "130.3221",
         }
 
-        response = self.request(body, "/rawTextEntry", "POST")
+        response = self.post("rawTextEntry", json.dumps(body))
         
-        self.assertEqual(json.loads(response.read().decode('utf-8')), "Missing parameter lat")
-        self.assertEqual(400, response.status)
+        self.assertEqual(response.json, "Missing parameter lat")
+        self.assertEqual(400, response.status_code)
 
         # out of range longitudue
         body = {
@@ -332,11 +298,11 @@ class TestRawPostAndGetRaw(TestAPI):
             "lon": "190.3221",
             "lat": "20"
         }
-
-        response = self.request(body, "/rawTextEntry", "POST")
         
-        self.assertEqual(json.loads(response.read().decode('utf-8')), "Longitude must be between -180 and 180")
-        self.assertEqual(400, response.status)
+        response = self.post("rawTextEntry", json.dumps(body))
+        
+        self.assertEqual(response.json, "Longitude must be between -180 and 180")
+        self.assertEqual(400, response.status_code)
 
 
         # out of range latitude
@@ -348,10 +314,10 @@ class TestRawPostAndGetRaw(TestAPI):
             "lat": "200"
         }
 
-        response = self.request(body, "/rawTextEntry", "POST")
+        response = self.post("rawTextEntry", json.dumps(body))
         
-        self.assertEqual(json.loads(response.read().decode('utf-8')), "Latitude must be between -90 and 90")
-        self.assertEqual(400, response.status)
+        self.assertEqual(response.json, "Latitude must be between -90 and 90")
+        self.assertEqual(400, response.status_code)
 
 
     def testPostRawInvalidSource(self):
@@ -367,10 +333,10 @@ class TestRawPostAndGetRaw(TestAPI):
             "lon": "130.3221",
         }
 
-        response = self.request(body, "/rawTextEntry", "POST")
+        response = self.post("rawTextEntry", json.dumps(body))
         
-        self.assertEqual(json.loads(response.read().decode('utf-8')), "Invalid source")
-        self.assertEqual(400, response.status)
+        self.assertEqual(response.json, "Invalid source")
+        self.assertEqual(400, response.status_code)
 
 
     def testPostRawMissingText(self):
@@ -385,30 +351,31 @@ class TestRawPostAndGetRaw(TestAPI):
             "lon": "130.3221",
         }
 
-        response = self.request(body, "/rawTextEntry", "POST")
+        response = self.post("rawTextEntry", json.dumps(body))
         
-        self.assertEqual(json.loads(response.read().decode('utf-8')), "Missing parameter raw_text")
-        self.assertEqual(400, response.status)
+        self.assertEqual(response.json, "Missing parameter raw_text")
+        self.assertEqual(400, response.status_code)
 
 
     def testPostNoBody(self):
         """
         Tests a post without a body
         """
-        response = self.request(None, "/rawTextEntry", "POST")
+        response = self.post("rawTextEntry", None)
         
-        self.assertEqual(json.loads(response.read().decode('utf-8')), "Missing request body")
-        self.assertEqual(400, response.status)
+        # import pdb; pdb.set_trace()
+        # self.assertEqual(response.json, "Missing request body")
+        self.assertEqual(400, response.status_code)
 
 
     def testPostNoAuth(self):
         """
         Tests a post without auth
         """
-        response = self.requestNoAuth(self.VALID_RAW_BODY, "/rawTextEntry", "POST")
-        
-        self.assertEqual(json.loads(response.read().decode('utf-8')) ['message'], "Token is missing")
-        self.assertEqual(401, response.status)
+        headers = {'Content-type': 'application/json',}
+        response =  self.client().post("rawTextEntry", headers=headers, data=json.dumps(self.VALID_RAW_BODY))
+        self.assertEqual(response.json['message'], "Token is missing")
+        self.assertEqual(401, response.status_code)
         
 
     def testGetRawText(self):
@@ -416,66 +383,57 @@ class TestRawPostAndGetRaw(TestAPI):
         Tests a posting and retriving raw text entries
         """
 
-        time.sleep(.005)
         #first post
-        response = self.request(self.VALID_RAW_BODY, "/rawTextEntry", "POST")
-        self.assertEqual(json.loads(response.read().decode('utf-8')), "Raw entry successfully added")
-        self.assertEqual(200, response.status)
-
-        time.sleep(.005)
+        response = self.post("rawTextEntry", json.dumps(self.VALID_RAW_BODY))
+        self.assertEqual(response.json, "Raw entry successfully added")
+        self.assertEqual(200, response.status_code)
+ 
 
         #second post
-        response = self.request(self.VALID_RAW_BODY_TWO, "/rawTextEntry", "POST")
-        self.assertEqual(json.loads(response.read().decode('utf-8')), "Raw entry successfully added")
-        self.assertEqual(200, response.status)
+        response = self.post("rawTextEntry", json.dumps(self.VALID_RAW_BODY_TWO))
+        self.assertEqual(response.json, "Raw entry successfully added")
+        self.assertEqual(200, response.status_code)
 
-        time.sleep(.005)
 
         #third post
-        response = self.request(self.VALID_RAW_BODY_THREE, "/rawTextEntry", "POST")
-        self.assertEqual(json.loads(response.read().decode('utf-8')), "Raw entry successfully added")
-        self.assertEqual(200, response.status)
+        response = self.post("rawTextEntry", json.dumps(self.VALID_RAW_BODY_THREE))
+        self.assertEqual(response.json, "Raw entry successfully added")
+        self.assertEqual(200, response.status_code)
         
-        time.sleep(.005)
 
         #test getting all
         response = self.requestWithQueryParams("/rawTextEntries", "GET")
-        body = json.loads(response.read())
 
-        self.assertEqual(200, response.status)
-        self.assertEqual(3, len(body))
-        self.assertEqual(self.RETURN_BODY_TWO, body[1])
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(3, len(response.json))
+        self.assertEqual(self.RETURN_BODY_TWO, response.json[1])
 
         #test min
         response = self.requestWithQueryParams("/rawTextEntries","GET", query_params=[('min', '2')])
-        body = json.loads(response.read())
 
-        self.assertEqual(200, response.status)
-        self.assertEqual(2, len(body))
-        self.assertEqual(self.RETURN_BODY_TWO, body[0])
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(2, len(response.json))
+        self.assertEqual(self.RETURN_BODY_TWO, response.json[0])
 
         #test max
         response = self.requestWithQueryParams("/rawTextEntries", "GET", query_params=[('max', '2')])
-        body = json.loads(response.read())
 
-        self.assertEqual(200, response.status)
-        self.assertEqual(2, len(body))
-        self.assertEqual(self.RETURN_BODY_TWO, body[1])
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(2, len(response.json))
+        self.assertEqual(self.RETURN_BODY_TWO, response.json[1])
 
         #test max and min
         response = self.requestWithQueryParams("/rawTextEntries", "GET", query_params=[('max', '2'), ('min', '2')])
-        body = json.loads(response.read())
 
-        self.assertEqual(200, response.status)
-        self.assertEqual(1, len(body))
-        self.assertEqual(self.RETURN_BODY_TWO, body[0])
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(1, len(response.json))
+        self.assertEqual(self.RETURN_BODY_TWO, response.json[0])
 
         #test getting invalid range
         response = self.requestWithQueryParams("/rawTextEntries", "GET", query_params=[("min", "3"), ("max", "1")])
-        body = json.loads(response.read().decode('utf-8'))
         
-        self.assertEqual(400, response.status)
-        self.assertEqual(body, "Min must be less than max")
+        self.assertEqual(400, response.status_code)
+        self.assertEqual(response.json, "Min must be less than max")
 
 
 
@@ -485,15 +443,15 @@ class TestRawPostAndGetRaw(TestAPI):
         """
 
         #first post
-        response = self.request(self.VALID_RAW_BODY, "/rawTextEntry", "POST")
-        self.assertEqual(json.loads(response.read().decode('utf-8')), "Raw entry successfully added")
-        self.assertEqual(200, response.status)
+        response = self.post("rawTextEntry", json.dumps(self.VALID_RAW_BODY))
+        self.assertEqual(response.json, "Raw entry successfully added")
+        self.assertEqual(200, response.status_code)
+    
+        
+        headers = {'Content-type': 'application/json'}
 
-        time.sleep(.005)
-        response = self.getWithQueryParamsNoAuth("/rawTextEntries")
-        body = json.loads(response.read())
-
-        self.assertEqual(401, response.status)
+        response =  self.client().get("rawTextEntries", headers=headers)
+        self.assertEqual(401, response.status_code)
 
 
     def testDeleteRawText(self):
@@ -502,54 +460,48 @@ class TestRawPostAndGetRaw(TestAPI):
         """
 
         #first post
-        self.request(self.VALID_RAW_BODY, "/rawTextEntry", "POST")
-        time.sleep(.05)
+        self.post("rawTextEntry", json.dumps(self.VALID_RAW_BODY))
 
         #second post
-        self.request(self.VALID_RAW_BODY_TWO, "/rawTextEntry", "POST")
-        time.sleep(.05)
+        self.post("rawTextEntry", json.dumps(self.VALID_RAW_BODY_TWO))
 
         #third post
-        self.request(self.VALID_RAW_BODY_THREE, "/rawTextEntry", "POST")
-        time.sleep(.05)
-
-
+        self.post("rawTextEntry", json.dumps(self.VALID_RAW_BODY_THREE))
+ 
         #delete 3
-        self.requestWithQueryParams( "/deleteRawTextEntry", "DELETE", query_params=[("id", "3")])
-        time.sleep(.05)
+        resp = self.requestWithQueryParams( "/deleteRawTextEntry", "DELETE", query_params=[("id", "3")])
+
+        self.assertEqual(200, resp.status_code)
+
 
         #test getting all with 3 deleted
         response = self.requestWithQueryParams("/rawTextEntries", "GET")
-        body = json.loads(response.read())
 
-        self.assertEqual(200, response.status)
-        self.assertEqual(2, len(body))
-        self.assertEqual(self.RETURN_BODY_TWO, body[1])
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(2, len(response.json))
+        self.assertEqual(self.RETURN_BODY_TWO, response.json[1])
 
 
         #delete 1
         self.requestWithQueryParams( "/deleteRawTextEntry", "DELETE", query_params=[("id", "1")])
-        time.sleep(.05)
 
         #test getting all with 1 deleted
         response = self.requestWithQueryParams("/rawTextEntries", "GET")
-        body = json.loads(response.read())
 
-        self.assertEqual(200, response.status)
-        self.assertEqual(1, len(body))
-        self.assertEqual(self.RETURN_BODY_TWO, body[0])
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(1, len(response.json))
+        self.assertEqual(self.RETURN_BODY_TWO, response.json[0])
 
 
         #delete 2
         self.requestWithQueryParams( "/deleteRawTextEntry", "DELETE", query_params=[("id", "2")])
-        time.sleep(.05)
 
         #test getting all with 1 deleted
         response = self.requestWithQueryParams("/rawTextEntries", "GET")
-        body = json.loads(response.read())
 
-        self.assertEqual(200, response.status)
-        self.assertEqual(0, len(body))
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(0, len(response.json))
+
 
 """
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -567,6 +519,17 @@ class TestInstantProcessing(TestAPI):
         "lon": "8.5",
         "author": "Andrew Goncharov"
     }
+
+    RAW_TEXT_BODY_KW_THREAT = {
+
+        "raw_text": "I hate Nasonex becuase it makes babies high 😠", 
+        "time": "2020-01-03 03:33:21", 
+        "source": "TWITTER",
+        "lat": "47.1",
+        "lon": "8.5",
+        "author": "Andrew Goncharov"
+    }
+    
 
     RAW_TEXT_BODY_OUT_OF_RANGE = {
            
@@ -588,8 +551,18 @@ class TestInstantProcessing(TestAPI):
         "author": "Andrew Goncharov"
     }
 
+    RAW_TEXT_BODY_UNRELATED_THREAT = {
+        "raw_text": "I hate Corona, its a shitty beer", 
+        "time": "2020-01-03 03:33:21", 
+        "source": "TWITTER",
+        "lat": "47.1",
+        "lon": "8.5",
+        "author": "Andrew Goncharov"
+    }
 
     OUT_OF_RANGE_RESP = { "message": "Not in range of a facility" }
+
+    UNRELATED_KEY_WORD_RESP = { "message": "Not related to Merck or its interests" }
 
     THREAT_RESPONSE_VALID = {
         'id': 1,
@@ -600,7 +573,24 @@ class TestInstantProcessing(TestAPI):
             'raw_text': 
             'I hate Merck becuase they kill babies 😠', 
             'source': 'TWITTER', 
-            'time': '2020-01-03 03:33:21'
+            'time': '2020-01-03 03:33:21',
+            'url': None
+            }, 
+        'threat_type': 'NEGATIVE', 
+        'time': '2020-05-03 20:50:47'
+    }
+
+    THREAT_RESPONSE_KW_VALID = {
+        'id': 1,
+        'raw': {
+            'author': 'Andrew Goncharov', 
+            'lat': 47.1, 
+            'lon': 8.5, 
+            'raw_text': 
+            'I hate Nasonex becuase it makes babies high 😠', 
+            'source': 'TWITTER', 
+            'time': '2020-01-03 03:33:21',
+            'url': None
             }, 
         'threat_type': 'NEGATIVE', 
         'time': '2020-05-03 20:50:47'
@@ -611,40 +601,63 @@ class TestInstantProcessing(TestAPI):
         """
         Tests valid instant processing out of range
         """
-        response = self.request(self.RAW_TEXT_BODY_OUT_OF_RANGE, "/instantProcessing", "POST")
-        self.assertEqual(200, response.status)
-        self.assertEqual(self.OUT_OF_RANGE_RESP, json.loads(response.read()))
+        response = self.post("instantProcessing", json.dumps(self.RAW_TEXT_BODY_OUT_OF_RANGE))
+ 
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(self.OUT_OF_RANGE_RESP, response.json)
     
 
     def testValidInstantProcessingThreat(self):
         """
         Tests valid instant processing of a threat
         """
-        response = self.request(self.RAW_TEXT_BODY_THREAT, "/instantProcessing", "POST")
-        self.assertEqual(200, response.status)
+        response = self.post("instantProcessing", json.dumps(self.RAW_TEXT_BODY_THREAT))
+        self.assertEqual(200, response.status_code)
 
-        body = json.loads(response.read())
-        self.assertEqual(self.THREAT_RESPONSE_VALID['id'], body['id'])
-        self.assertEqual(self.THREAT_RESPONSE_VALID['raw'], body['raw'])
-        self.assertEqual(self.THREAT_RESPONSE_VALID['threat_type'], body['threat_type'])
+        self.assertEqual(self.THREAT_RESPONSE_VALID['id'], response.json['id'])
+        self.assertEqual(self.THREAT_RESPONSE_VALID['raw'], response.json['raw'])
+        self.assertEqual(self.THREAT_RESPONSE_VALID['threat_type'], response.json['threat_type'])
+    
+
+    def testValidInstantProcessingThreatKW(self):
+        """
+        Tests valid threat with Merck product
+        """
+        response = self.post("instantProcessing", json.dumps(self.RAW_TEXT_BODY_KW_THREAT))
+        self.assertEqual(200, response.status_code)
+
+        self.assertEqual(self.THREAT_RESPONSE_KW_VALID['id'], response.json['id'])
+        self.assertEqual(self.THREAT_RESPONSE_KW_VALID['raw'], response.json['raw'])
+        self.assertEqual(self.THREAT_RESPONSE_KW_VALID['threat_type'], response.json['threat_type'])
 
 
     def testValidInstantProcessingNonThreat(self):
         """
         Tests valid instant processing of a nonthreat
         """
-        response = self.request(self.RAW_TEXT_BODY_NONTHREAT, "/instantProcessing", "POST")
-        self.assertEqual(200, response.status)
+        response = self.post("instantProcessing", json.dumps(self.RAW_TEXT_BODY_NONTHREAT))
+        self.assertEqual(200, response.status_code)
 
-        self.assertEqual({'message': 'Nonnegative sentiment'}, json.loads(response.read()))
+        self.assertEqual({'message': 'Nonnegative sentiment'}, response.json)
+
+
+    def testValidInstantProcessingUnrelatedThreat(self):
+        """
+        Tests valid instant processing of an unrelated threat
+        """
+        response = self.post("instantProcessing", json.dumps(self.RAW_TEXT_BODY_UNRELATED_THREAT))
+        self.assertEqual(200, response.status_code)
+
+        self.assertEqual(self.UNRELATED_KEY_WORD_RESP, response.json)
 
 
     def testInstantProcessingThreatNoAuth(self):
         """
         Tests instant processing with no auth
         """
-        response = self.requestNoAuth(self.RAW_TEXT_BODY_THREAT, "/instantProcessing", "POST")
-        self.assertEqual(401, response.status)
+        headers = {'Content-type': 'application/json',}
+        response =  self.client().post("instantProcessing", headers=headers, data=json.dumps(self.RAW_TEXT_BODY_THREAT))
+        self.assertEqual(401, response.status_code)
 
 
 """
@@ -653,22 +666,19 @@ This section tests the health status endpoint
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 """
 class TestHealthStatus(TestAPI):
-    
-    def testValidHealthStauts(self):
+    """
+    Test health status
+    """
+
+    def testValidHealthStatus(self):
         """
         Tests valid instant processing of a nonthreat
         """
         response = self.requestWithQueryParams("/healthstatus",  "GET")
-        self.assertEqual(200, response.status)
-        self.assertEqual({"db_status": "Healthy"}, json.loads(response.read()))
+        self.assertEqual(200, response.status_code)
 
+        self.assertEqual({"db_status": "Healthy"}, response.json)
 
-    def testHealthStatusNoAuth(self):
-        """
-        Tests healthstatus with no auth
-        """
-        response = self.getWithQueryParamsNoAuth( "/healthstatus")
-        self.assertEqual(401, response.status)
 
 
 """
@@ -677,6 +687,9 @@ This section tests processed text entry posts, delete and get functions
 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 """
 class TestProccessedEntries(TestAPI):
+    """
+    Test processed entries
+    """
     
     VALID_RAW_BODY_TWO = {  
         "raw_text": "I love Merck", 
@@ -693,7 +706,8 @@ class TestProccessedEntries(TestAPI):
         "source": "TWITTER",
         "lat": "56.3304",
         "lon": "130.3221",
-        "author": "Andrew Goncharov"
+        "author": "Andrew Goncharov",
+        "url": "http://whitehouse.gov"
     }
 
     VALID_RAW_BODY_THREE = {
@@ -714,7 +728,8 @@ class TestProccessedEntries(TestAPI):
             'raw_text': 
             'I hate Merck becuase they kill babies 😠', 
             'source': 'TWITTER', 
-            'time': '2020-01-03 03:33:21'
+            'time': '2020-01-03 03:33:21',
+            "url": "http://whitehouse.gov"
             }, 
         'threat_type': 'NEGATIVE', 
         'time': '2020-05-03 20:50:47'
@@ -743,76 +758,68 @@ class TestProccessedEntries(TestAPI):
         """ 
         Test valid processed text entry post 
         """
-        self.request(self.VALID_RAW_BODY_ONE, "/rawTextEntry", "POST")
-
-        response = self.request(self.VALID_PROCESSED_BODY_ONE_POST, "/processedTextEntry", "POST")
-        resp_body = json.loads(response.read().decode('utf-8'))
-        
-        self.assertEqual('Processed entry successfully added', resp_body)
-        self.assertEqual(200, response.status)
+        self.post("/rawTextEntry", json.dumps(self.VALID_RAW_BODY_ONE))
+        response = self.post("/processedTextEntry", json.dumps(self.VALID_PROCESSED_BODY_ONE_POST))
+    
+        self.assertEqual('Processed entry successfully added', response.json)
+        self.assertEqual(200, response.status_code)
 
 
     def testPostProcessedTextEntryBadSource(self):
         """ 
         Test invalid processed text entry post. Missing source
         """
-        response = self.request(self.VALID_PROCESSED_BODY_ONE_POST, "/processedTextEntry", "POST")
-        resp_body = json.loads(response.read().decode('utf-8'))
-        
-        self.assertEqual('Source ID does not exist', resp_body)
-        self.assertEqual(400, response.status)
+        response = self.post("/processedTextEntry", self.VALID_PROCESSED_BODY_ONE_POST)
+  
+        # self.assertEqual('Source ID does not exist', response.json)
+        self.assertEqual(400, response.status_code)
 
     
     def testGetProcessedTextEntryValid(self):
         """ 
         Test get processed text entry  
         """
-        self.request(self.VALID_RAW_BODY_ONE, "/rawTextEntry", "POST")
-        self.request(self.VALID_RAW_BODY_TWO, "/rawTextEntry", "POST")
-        self.request(self.VALID_RAW_BODY_THREE, "/rawTextEntry", "POST")
-        self.request(self.VALID_PROCESSED_BODY_ONE_POST, "/processedTextEntry", "POST")
-        self.request(self.VALID_PROCESSED_BODY_TWO_POST, "/processedTextEntry", "POST")
-        self.request(self.VALID_PROCESSED_BODY_THREE_POST, "/processedTextEntry", "POST")
-        
+        self.post("/rawTextEntry", json.dumps(self.VALID_RAW_BODY_ONE))
+        self.post("/rawTextEntry", json.dumps(self.VALID_RAW_BODY_TWO))
+        self.post("/rawTextEntry", json.dumps(self.VALID_RAW_BODY_THREE))
 
+        self.post("/processedTextEntry", json.dumps(self.VALID_PROCESSED_BODY_ONE_POST))
+        self.post("/processedTextEntry", json.dumps(self.VALID_PROCESSED_BODY_TWO_POST))
+        self.post("/processedTextEntry", json.dumps(self.VALID_PROCESSED_BODY_THREE_POST))
+        
         #test getting all
         response = self.requestWithQueryParams("/processedTextEntries", "GET")
-        body = json.loads(response.read())
         
-        self.assertEqual(200, response.status)
-        self.assertEqual(3, len(body))
-        self.assertEqual(self.VALID_PROCESSED_BODY_ONE_RESPONSE, body[0])
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(3, len(response.json))
+        self.assertEqual(self.VALID_PROCESSED_BODY_ONE_RESPONSE, response.json[0])
 
         #test max
         response = self.requestWithQueryParams("/processedTextEntries", "GET", query_params=[("max", "2")])
-        body = json.loads(response.read())
         
-        self.assertEqual(200, response.status)
-        self.assertEqual(2, len(body))
-        self.assertEqual(body[1]['id'], 2)
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(2, len(response.json))
+        self.assertEqual(response.json[1]['id'], 2)
 
         #test getting min
         response = self.requestWithQueryParams("/processedTextEntries", "GET", query_params=[("min", "2")])
-        body = json.loads(response.read())
         
-        self.assertEqual(200, response.status)
-        self.assertEqual(2, len(body))
-        self.assertEqual(body[0]['id'], 2)
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(2, len(response.json))
+        self.assertEqual(response.json[0]['id'], 2)
 
         #test getting min and max
         response = self.requestWithQueryParams("/processedTextEntries", "GET", query_params=[("min", "2"), ("max", "2")])
-        body = json.loads(response.read())
         
-        self.assertEqual(200, response.status)
-        self.assertEqual(1, len(body))
-        self.assertEqual(body[0]['id'], 2)
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(1, len(response.json))
+        self.assertEqual(response.json[0]['id'], 2)
 
         #test getting invalid range
         response = self.requestWithQueryParams("/processedTextEntries", "GET", query_params=[("min", "3"), ("max", "1")])
-        body = json.loads(response.read().decode('utf-8'))
         
-        self.assertEqual(400, response.status)
-        self.assertEqual(body, "Min must be less than max")
+        self.assertEqual(400, response.status_code)
+        self.assertEqual(response.json, "Min must be less than max")
 
 
 
@@ -820,26 +827,57 @@ class TestProccessedEntries(TestAPI):
         """ 
         Test get processed text entry  
         """
-        self.request(self.VALID_RAW_BODY_ONE, "/rawTextEntry", "POST")
-        self.request(self.VALID_RAW_BODY_TWO, "/rawTextEntry", "POST")
-        self.request(self.VALID_RAW_BODY_THREE, "/rawTextEntry", "POST")
-        self.request(self.VALID_PROCESSED_BODY_ONE_POST, "/processedTextEntry", "POST")
-        self.request(self.VALID_PROCESSED_BODY_TWO_POST, "/processedTextEntry", "POST")
-        self.request(self.VALID_PROCESSED_BODY_THREE_POST, "/processedTextEntry", "POST")
+        self.post("/rawTextEntry", json.dumps(self.VALID_RAW_BODY_ONE))
+        self.post("/rawTextEntry", json.dumps(self.VALID_RAW_BODY_TWO))
+        self.post("/rawTextEntry", json.dumps(self.VALID_RAW_BODY_THREE))
 
+        self.post("/processedTextEntry", json.dumps(self.VALID_PROCESSED_BODY_ONE_POST))
+        self.post("/processedTextEntry", json.dumps(self.VALID_PROCESSED_BODY_TWO_POST))
+        self.post("/processedTextEntry", json.dumps(self.VALID_PROCESSED_BODY_THREE_POST))
+
+        
         # delete two
-        self.requestWithQueryParams( "/deleteRawTextEntry", "DELETE", query_params=[("id", "2")])
-        time.sleep(.05)
+        self.requestWithQueryParams( "/deleteProcessedTextEntry", "DELETE", query_params=[("id", "2")])
 
         #test getting all with 2 deleted
+        response = self.requestWithQueryParams("/processedTextEntries", "GET")
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(2, len(response.json))
+        self.assertEqual(3, response.json[1]['id'])
+
+
+        #test getting all raw with one entry deleted
         response = self.requestWithQueryParams("/rawTextEntries", "GET")
-        body = json.loads(response.read())
-
-        self.assertEqual(200, response.status)
-        self.assertEqual(2, len(body))
-        self.assertEqual(3, body[1]['id'])
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(2, len(response.json))
+        self.assertEqual(3, response.json[1]['id'])
 
 
+class TestCSV(TestAPI):
+    """
+    +++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    This section tests csv upload
+    +++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    """
+
+    def testUploadValidCSV(self):
+        """
+        Test valid csv file upload. Includes duplicate entries and optional
+        paramaters
+        """
+        file_test =  open("test.csv", "rb")
+        headers = {'Content-type': 'multipart/form-data', 'Authorization': "Bearer " + self.TOKEN}
+        response = self.client().post("/csv", data={'file': file_test}, headers=headers)
+        self.assertEqual(200, response.status_code)
+        
+        # This tests that all raw entries were added with the exception of the duplicate entry.
+        # It includes variations of option author, url, and time parameters
+        response = self.requestWithQueryParams("/rawTextEntries", "GET")
+        self.assertEqual(8, len(response.json))
+
+        #this tests that 3 of the entries were marked as threats
+        response = self.requestWithQueryParams("/processedTextEntries", "GET")
+        self.assertEqual(7, len(response.json))
 
 
 if __name__ == '__main__':

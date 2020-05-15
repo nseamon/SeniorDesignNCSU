@@ -12,9 +12,10 @@ from flask_testing import TestCase
 
 sys.path.append('..')
 
-import app
+from app import application
 import db
 import models
+import api
 
 from models import User
 
@@ -36,16 +37,23 @@ class TestAuth(TestCase):
         """
         Creates app for testing
         """
-        app = Flask(__name__)
-        CORS(app)
-        return app
+        return application 
+
 
     def setUp(self):
         """
-        Deletes and recreates new blank tables so that testing is indempodent
+        Deletes and recreates new blank tables so that testing is idempotent
+        Creates a user and logs the user in to generate session token
         """
+        self.app = self.create_app()
+        self.client = self.app.test_client
+
+        time.sleep(.01)
         models.Base.metadata.drop_all(db.engine)
+
+        time.sleep(.01)
         models.Base.metadata.create_all(db.engine)
+
 
     def tearDown(self):
         """
@@ -53,26 +61,25 @@ class TestAuth(TestCase):
         """
         models.Base.metadata.drop_all(db.engine)
 
+
+    def post(self, endpoint, body):
+        headers = {'Content-type': 'application/json'}
+        return self.client().post(endpoint, headers=headers, data=body)
+    
+
     def test_createAccount_bad(self):
         """ 
         Test for user registration with bad parameters 
         """
 
-        headers = {'Content-type': 'application/json'}
-        conn = http.client.HTTPConnection(HOST, PORT)
-        
-        senddata = {
+        body = {
             "email": "bimal@gmail.com",
             "password": "123456789",
             "secret_code": "SeniorDesignS2020"
         }
-        json_data = json.dumps(senddata)
-        conn.request('POST', '/createAccount', json_data, headers)
-        response = conn.getresponse()
-        conn.close()
 
-        self.assertTrue(response.status == 400)
-        self.assertTrue(response.reason == 'BAD REQUEST')
+        response = self.post("createAccount", json.dumps(body))
+        self.assertEqual(400, response.status_code)
 
 
     def test_createAccount(self):
@@ -80,21 +87,15 @@ class TestAuth(TestCase):
         Test for valid user registration 
         """
 
-        headers = {'Content-type': 'application/json'}
-        conn = http.client.HTTPConnection(HOST, PORT)
-        senddata = {
+        body = {
                 "email": "bimal@gmail.com",
                 "username": "bimalcreatAccount1",
                 "password": "123456789",
                 "secret_code": "SeniorDesignS2020"
             }
-        json_data = json.dumps(senddata)
-        conn.request('POST', '/createAccount' , json_data, headers)
-        response = conn.getresponse()
-        conn.close()
-
-        self.assertTrue(response.status == 200)
-        self.assertTrue(response.reason == 'OK')
+        
+        response = self.post("createAccount", json.dumps(body))
+        self.assertEqual(200, response.status_code)
 
 
     def test_createAccount_with_already_registered_user(self):
@@ -103,27 +104,19 @@ class TestAuth(TestCase):
         """
 
         #first registered
-        headers = {'Content-type': 'application/json'}
-        conn = http.client.HTTPConnection(HOST, PORT)
-
-        senddata = {
+        body = {
             "email": "bimal@gmail.com",
             "username": "bimalcreataccounterror1",
             "password": "123456789",
             "secret_code": "SeniorDesignS2020"
         }
 
-        json_data = json.dumps(senddata)
-        conn.request('POST', '/createAccount', json_data, headers)
-        conn.close()
+        response = self.post("createAccount", json.dumps(body))
 
         # needed because the database takes time to update
         time.sleep(SLEEP_TIME)
         
         #2nd reg dup
-        headers = {'Content-type': 'application/json'}
-        conn = http.client.HTTPConnection(HOST, PORT)
-
         senddata = {
             "email": "bimal@gmail.com",
             "username": "bimalcreataccounterror1",
@@ -131,36 +124,23 @@ class TestAuth(TestCase):
             "secret_code": "SeniorDesignS2020"
         }
 
-        json_data = json.dumps(senddata)
+        response = self.post("createAccount", json.dumps(body))
+        self.assertEqual(400, response.status_code)
 
-        conn.request('POST', '/createAccount', json_data, headers)
-        response = conn.getresponse()
-        conn.close()
-
-        self.assertTrue(response.status == 401)
-        self.assertTrue(response.reason == 'UNAUTHORIZED')
 
     def test_login_missing_info(self):
         """
         Tests login; password param missing
         """
-
-        headers = {'Content-type': 'application/json'}
-        conn = http.client.HTTPConnection(HOST, PORT)
         
         # login
-        senddata = {
+        body = {
             "username": "bimalloginerrorNO1"
         }
 
-        json_data = json.dumps(senddata)
+        response = self.post("login", json.dumps(body))
 
-        conn.request('POST', '/login', json_data, headers)
-        response = conn.getresponse()
-        conn.close()
-
-        self.assertTrue(response.status == 400)
-        self.assertTrue(response.reason == 'BAD REQUEST')
+        self.assertEqual(400, response.status_code)
 
 
     def test_login_not_in_system(self):
@@ -168,23 +148,16 @@ class TestAuth(TestCase):
         Tests user not in database
         """
 
-        headers = {'Content-type': 'application/json'}
-        conn = http.client.HTTPConnection(HOST, PORT)
-        
         # login
-        senddata = {
+        body = {
             "username": "bimalloginerror1",
             "password": "123456789"
         }
 
-        json_data = json.dumps(senddata)
+        response = self.post("login", json.dumps(body))
 
-        conn.request('POST', '/login', json_data, headers)
-        response = conn.getresponse()
-        conn.close()
+        self.assertEqual(404, response.status_code)
 
-        self.assertTrue(response.status == 404)
-        self.assertTrue(response.reason == 'NOT FOUND')
 
 
 
@@ -192,144 +165,97 @@ class TestAuth(TestCase):
         """ 
         Tests valid registration and login
         """
-
-        headers = {'Content-type': 'application/json'}
-        conn = http.client.HTTPConnection(HOST, PORT)
-        
+       
         # register
-
-        senddata = {
+        body = {
             "email": "bimal@gmail.com",
             "username": "bimallogin_1",
             "password": "123456789",
             "secret_code": "SeniorDesignS2020"
         }
 
-        json_data = json.dumps(senddata)
-        conn.request('POST', '/createAccount', json_data, headers)
-        conn.close()
+        response = self.post("createAccount", json.dumps(body))
 
         # avoids timing errors
         time.sleep(SLEEP_TIME)
         
         #login
-        headers = {'Content-type': 'application/json'}
-        conn = http.client.HTTPConnection(HOST, PORT)
-        senddata = {
+        body = {
             "username": "bimallogin_1",
             "password": "123456789"
         }
-        json_data = json.dumps(senddata)
 
-        conn.request('POST', '/login', json_data, headers)
-        response = conn.getresponse()
-        conn.close()
+        response = self.post("login", json.dumps(body))
  
-        self.assertTrue(response.status == 200)
-        self.assertTrue(response.reason == 'OK')
-
+        self.assertEqual(200, response.status_code)
+        self.assertTrue(response.json['token'])
 
 
 
     def test_logout_error(self):
         """
-
+        Logout error 
         """
 
-        headers = {'Content-type': 'application/json'}
-        conn = http.client.HTTPConnection(HOST, PORT)
-
         #make user
-        senddata = {
+        body = {
             "email": "bimal@gmail.com",
             "username": "bimallogouterror_1",
             "password": "123456789",
             "secret_code": "SeniorDesignS2020"
         }
 
-        json_data = json.dumps(senddata)
-        conn.request('POST', '/createAccount', json_data, headers)
-        conn.close()
+        self.post("createAccount", json.dumps(body))
 
-        #login
-        headers = {'Content-type': 'application/json'}
-        conn = http.client.HTTPConnection(HOST, PORT)
-        
-        senddata = {
+        body = {
             "username": "bimallogouterror_1",
             "password": "123456789"
         }
 
-        json_data = json.dumps(senddata)
-        conn.request('POST', '/login', json_data, headers)
-        conn.close()
-
+        response = self.post("login", json.dumps(body))
+       
         #logout
-        headers = {'Content-type': 'application/json'}
-        conn = http.client.HTTPConnection(HOST, PORT)
-        
-        senddata = {
+        body = {
             "username": "bimallogouterror_"
         }
 
-        json_data = json.dumps(senddata)
-        conn.request('POST', '/logout', json_data, headers)
-        response = conn.getresponse()
-        conn.close()
+        response = self.post("logout", json.dumps(body))
+        self.assertEqual(404, response.status_code)
 
-        self.assertTrue(response.status == 404)
-        self.assertTrue(response.reason == 'NOT FOUND')
 
     def test_logout(self):
         """
         Valid logout
         """
 
-        headers = {'Content-type': 'application/json'}
-        conn = http.client.HTTPConnection(HOST, PORT)
-        
         #add user
-        senddata = {
+        body = {
             "email": "bimal@gmail.com",
             "username": "bimallogout_1",
             "password": "123456789",
             "secret_code": "SeniorDesignS2020"
         }
 
-        json_data = json.dumps(senddata)
-        conn.request('POST', '/createAccount', json_data, headers)
-        conn.close()
+        self.post("createAccount", json.dumps(body))
 
         # login
-        headers = {'Content-type': 'application/json'}
-        conn = http.client.HTTPConnection(HOST, PORT)
-        
-        senddata = {
+        body = {
             "username": "bimallogout_1",
             "password": "123456789"
         }
 
-        json_data = json.dumps(senddata)
-        conn.request('POST', '/login', json_data, headers)
-        conn.close()
+        response = self.post("login", json.dumps(body))
 
         time.sleep(SLEEP_TIME)
 
         # logout
-        headers = {'Content-type': 'application/json'}
-        conn = http.client.HTTPConnection(HOST, PORT)
-        
-        senddata = {
+        body = {
             "username": "bimallogout_1"
         }
 
-        json_data = json.dumps(senddata)
-        conn.request('POST', '/logout', json_data, headers)
-        response = conn.getresponse()
-        conn.close()
+        response = self.post("logout", json.dumps(body))
+        self.assertEqual(200, response.status_code)
 
-        self.assertTrue(response.status == 200)
-        self.assertTrue(response.reason == 'OK')
 
 
 if __name__ == '__main__':

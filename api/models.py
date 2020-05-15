@@ -23,8 +23,9 @@ class RawTextEntry(Base):
     emojis = Column(Boolean)
     processed = Column(Boolean)
     author = Column(String)
+    url = Column(String)
 
-    def __init__(self, rawText, time, source, lat, lon, author=None):
+    def __init__(self, rawText, time, source, lat, lon, author=None, url=None):
         self.rawText = rawText
         self.timeCreated = time
         self.source = source
@@ -33,6 +34,7 @@ class RawTextEntry(Base):
         self.author=author
         self.emojis=False
         self.processed=False
+        self.url=url
 
 
 class ProcessedTextEntry(Base):

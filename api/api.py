@@ -1,12 +1,15 @@
+import csv
 import datetime
 import json
 import jwt
+import pandas as pd
 import re
-
+import smtplib, ssl
 from flask import request, json, Response, make_response
 from functools import wraps
 from sqlalchemy import select, and_
 from vaderSentiment import vaderSentiment
+
 
 import db
 
@@ -14,7 +17,8 @@ from auth import validatePassword
 from geoProximity import inRangeOfMerckFacility
 from kwFilter import filterText
 from models import RawTextEntry, ProcessedTextEntry, User
-from settings import SOURCES, JWT_SECRET, CREATE_ACCOUNT_CODE
+from settings import  CREATE_ACCOUNT_CODE, EMAIL_SERVER, JWT_SECRET, SOURCES,\
+                    SYSTEM_EMAIL_ADDRESS, SYSTEM_EMAIL_PW
 
 
 def buildResponse(body, status):
@@ -43,51 +47,34 @@ def postRawTextEntry(instant=False):
     
     keys = req.keys()
 
-    # error checking
-    if 'raw_text' not in keys:
-        return buildResponse(json.dumps("Missing parameter raw_text"), 400)
-    elif 'source' not in keys:
-        return buildResponse(json.dumps("Missing parameter source"), 400)
-    elif 'lat' not in keys:
-        return buildResponse(json.dumps("Missing parameter lat"), 400)
-    elif 'lon' not in keys:
-        return buildResponse(json.dumps("Missing parameter lon"), 400)
-
-    if req['source'] not in SOURCES:
-        return buildResponse(json.dumps("Invalid source"), 400)
-
-    # TAKE THIS FLAT EARTHERS
-    if (float(req['lat']) > 90) or (float(req['lat'])< -90):
-         return buildResponse(json.dumps("Latitude must be between -90 and 90"), 400)
-
-    if (float(req['lon']) > 180) or (float(req['lon']) < -180):
-         return buildResponse(json.dumps("Longitude must be between -180 and 180"), 400)
+    param_error = verify_params(req)
+    if param_error:
+        return  param_error
 
     # if no time is provided, use current time
     if 'time' not in keys:
         time = datetime.datetime.now().strftime("%Y-%d-%m %H:%M:%S")
-   
-    # checks that time is in format YYYY-DD-MM HH:MM:SS   
     else:
         time = req['time']
-        regex = re.compile("^([2])\d\d\d-(3[0-1]|[0-2][0-9])-([0-2][0-9]|3[0-1]) ([0][0-9]|1[0-9]|2[0-3]):([0-5][0-9]):([0-5][0-9])$")
-        if not regex.match(time):
-            return buildResponse(json.dumps("Invalid time format, must be YYYY-DD-MM HH:MM:SS"), 400)
-
+        
     author = None
     if 'author' in keys:
         author = req['author']
+
+    url = None
+    if 'url' in keys:
+        url = req['url']
 
     if db.getRaw(time, req['raw_text']):
           return buildResponse(json.dumps("Text entry with time and text already exists"), 400)
 
     # add raw entry to the db
-    rawEntry = RawTextEntry(req['raw_text'], time, req['source'], req['lat'], req['lon'], author)
+    rawEntry = RawTextEntry(req['raw_text'], time, req['source'], req['lat'], req['lon'], author, url)
     db.addObject(rawEntry)
 
     # return none for instant processing mode
     if instant:
-        return None
+        return time
 
     return buildResponse(json.dumps("Raw entry successfully added"), 200)
 
@@ -271,6 +258,7 @@ def getProcessedText():
                 'lat' : raw.latitude,
                 'lon': raw.longitude,
                 'author': raw.author,
+                'url': raw.url
             }
         })
 
@@ -341,43 +329,26 @@ def instantProcessing():
 
     :return:  response object
     """
-
     # validates entry and adds it to db
     response = postRawTextEntry(instant=True)
     
-    # this means there was an error adding the raw entry
-    if response:
-        
+    # this means there was an error adding the raw entry 
+    if isinstance(response, Response):
         # we return the error
         return response
+
+    #this means sucessful and returned time
+    time = response
     
-    raw_entry = db.getRaw(request.json['time'], request.json['raw_text'])
+    raw_entry = db.getRaw(time, request.json['raw_text'])
 
-    if not filterText(request.json['raw_text']):
-        return buildResponse(body=json.dumps({"message": "Not related to Merck or its interests"}), status=200)
-
-    analyzer = vaderSentiment.SentimentIntensityAnalyzer()
-    sentiment =  analyzer.polarity_scores(request.json['raw_text'])
-
-    neg = False
+    nonthreat_response = is_threat(raw_entry[1], raw_entry[4], raw_entry[5])
     
-    if sentiment['neg'] > 0.5:
-        neg = True
-    elif sentiment['pos'] < 0.1 and sentiment['neg'] > 0.3:
-        neg = True
-   
-    # if sentiment is neutral or positive we dont want to waste
-    # finite db space
-    if not neg:
-        return buildResponse(body=json.dumps({"message": "Nonnegative sentiment"}), status=200)
-
-    # check to see if the threat is in the range of a Merck Facility 
-    if not inRangeOfMerckFacility(raw_entry[4], raw_entry[5]):
-        return buildResponse(body=json.dumps({"message": "Not in range of a facility"}), status=200)
+    if nonthreat_response:
+        return nonthreat_response
     
-    time = datetime.datetime.now().strftime("%Y-%d-%m %H:%M:%S")
-
     # added processed entry 
+    time = datetime.datetime.now().strftime("%Y-%d-%m %H:%M:%S")
     processed_entry = ProcessedTextEntry(int(raw_entry[0]), time, 'NEGATIVE')
     db.addObject(processed_entry)
 
@@ -395,11 +366,171 @@ def instantProcessing():
             'source': raw_entry[3],
             'lat' : raw_entry[4],
             'lon': raw_entry[5],
-            'author': raw_entry[8]
+            'author': raw_entry[8],
+            'url': raw_entry[9]
         }    
     })   
 
     return(buildResponse(body=resp, status=200))
+
+
+def verify_params(raw_dict, line_num=None):
+    """
+    Helper method to verify dict of params for csv
+
+    :param: dict of raw entry params
+    :param: line in csv for quick error verification
+    :return: response body on error or null
+    """
+    string_end = ""
+
+    if line_num is not None:
+        string_end = " on line {}.".format(line_num)
+
+    keys = raw_dict.keys()
+    if 'raw_text' not in keys:
+        return buildResponse(json.dumps("Missing parameter raw_text{}".format(string_end)), 400)
+    elif 'source' not in keys:
+        return buildResponse(json.dumps("Missing parameter source{}".format(string_end)), 400)
+    elif 'lat' not in keys:
+        return buildResponse(json.dumps("Missing parameter lat{}".format(string_end)), 400)
+    elif 'lon' not in keys:
+        return buildResponse(json.dumps("Missing parameter lon{}".format(string_end)), 400)
+
+    if raw_dict['source'] not in SOURCES:
+        return buildResponse(json.dumps("Invalid source{}".format(string_end)), 400)
+
+    # TAKE THIS FLAT EARTHERS
+    if (float(raw_dict['lat']) > 90) or (float(raw_dict['lat'])< -90):
+         return buildResponse(json.dumps("Latitude must be between -90 and 90{}".format(string_end)), 400)
+
+    if (float(raw_dict['lon']) > 180) or (float(raw_dict['lon']) < -180):
+         return buildResponse(json.dumps("Longitude must be between -180 and 180{}".format(string_end)), 400)
+
+    # if no time is provided, use current time
+    if 'time' not in keys or raw_dict['time'] == "":
+        time = datetime.datetime.now().strftime("%Y-%d-%m %H:%M:%S")
+   
+    # checks that time is in format YYYY-DD-MM HH:MM:SS   
+    else:
+        time = raw_dict['time']
+        regex = re.compile("^([2])\d\d\d-(3[0-1]|[0-2][0-9])-([0-2][0-9]|3[0-1]) ([0][0-9]|1[0-9]|2[0-3]):([0-5][0-9]):([0-5][0-9])$")
+        if not regex.match(time):
+            return buildResponse(json.dumps("Invalid time format, must be YYYY-DD-MM HH:MM:SS{}".format(string_end)), 400)
+
+    if 'url' in keys and raw_dict['url'] is not None and raw_dict['url'] is not "":
+        url = raw_dict['url']
+        regex = re.compile("http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+")
+        if not regex.match(url):
+            return buildResponse(json.dumps("Invalid url. Must start with http or https{}".format(string_end)), 400)
+    
+    return None
+
+
+def upload_csv():
+    """
+    Endpoint instant proccesses a CSV files
+
+    :return: response object
+    """
+    # HELPFUL RESOURCE: https://riptutorial.com/flask/example/32038/parse-csv-file-upload-as-list-of-dictionaries-in-flask-without-saving 
+    if 'file' not in request.files:
+        return buildResponse(body=json.dumps({"message": "No file provided"}), status=400)
+        
+    csv_file = request.files['file']
+    
+    if csv_file.filename == '':
+        return buildResponse(body=json.dumps({"message": "No file provided"}), status=400)
+    
+    csv_file_reader = csv.DictReader(csv_file)
+    
+    #store the file contents as a string
+    cvs_to_string = csv_file.read().decode('utf-8')
+
+    #create list of dictionaries keyed by header row
+    csv_dicts = [{k: v for k, v in row.items()} for row in csv.DictReader(cvs_to_string.splitlines(), skipinitialspace=True)]
+
+    try:
+        for x, row in enumerate(csv_dicts, start=1):
+            # Do something here
+            invalid_resp = verify_params(row, x)
+            if invalid_resp:
+                return invalid_resp
+        
+            # if no time is provided, use current time
+            if 'time' not in row.keys():
+                time = datetime.datetime.now().strftime("%Y-%d-%m %H:%M:%S")
+            else:
+                time = row['time']
+            
+            if db.getRaw(time, row['raw_text']):
+                continue
+
+            author = None
+            if 'author' in row.keys():
+                author = row['author']
+            
+            url = None
+            if 'url' in row.keys():
+                url = row['url']
+
+            # add raw entry to the db
+            rawEntry = RawTextEntry(row['raw_text'], time, row['source'], row['lat'], row['lon'], author, url)
+            db.addObject(rawEntry)
+
+            if not is_threat(row['raw_text'], float(row['lat']), float(row['lon'])):
+                
+                #this means sucessful and returned time
+                raw_entry = db.getRaw(time, row['raw_text'])
+
+                nonthreat_response = is_threat(raw_entry[1], raw_entry[4], raw_entry[5])
+                
+                if nonthreat_response:
+                    return nonthreat_response
+                
+                # added processed entry 
+                time = datetime.datetime.now().strftime("%Y-%d-%m %H:%M:%S")
+                processed_entry = ProcessedTextEntry(int(raw_entry[0]), time, 'NEGATIVE')
+                db.addObject(processed_entry)
+
+    except Exception:
+        buildResponse(body=json.dumps({"message": "Processing error"}), status=400)
+
+    return buildResponse(body=json.dumps({"message": "File upload success"}), status=200)
+
+    
+def is_threat(text, lat, lon):
+    """
+    Checks to see if sentiment is threating, related to Merck and within range of a facility 
+
+    :param: raw text
+    :param: latitude
+    :param: longitude
+    :return: response body if nonthreat or null if it is a threat
+    """
+    if not filterText(text):
+        return buildResponse(body=json.dumps({"message": "Not related to Merck or its interests"}), status=200)
+
+    analyzer = vaderSentiment.SentimentIntensityAnalyzer()
+    sentiment = analyzer.polarity_scores(text)
+
+    neg = False
+    
+    if sentiment['neg'] > 0.5:
+        neg = True
+    elif sentiment['pos'] < 0.1 and sentiment['neg'] > 0.3:
+        neg = True
+   
+    # if sentiment is neutral or positive we dont want to waste
+    # finite db space
+    if not neg:
+        return buildResponse(body=json.dumps({"message": "Nonnegative sentiment"}), status=200)
+
+    # check to see if the threat is in the range of a Merck Facility 
+    if not inRangeOfMerckFacility(lat, lon):
+        return buildResponse(body=json.dumps({"message": "Not in range of a facility"}), status=200)
+    
+    return None
 
 
 def getSources():
@@ -429,15 +560,22 @@ def createAccount():
     keys = req.keys()
 
     #error checking
-    if 'email' not in keys:
+    if 'email' not in keys or req['email'] == None: 
         return buildResponse(json.dumps("Missing parameter email"), 400)
-    elif 'username' not in keys:
+    elif 'username' not in keys or req['username'] == None or req['username'] ==  "":
         return buildResponse(json.dumps("Missing parameter username"), 400)
-    elif 'password' not in keys:
+    elif 'password' not in keys or req['password'] == None or req['password'] ==  "":
         return buildResponse(json.dumps("Missing parameter password"), 400)
-    elif 'secret_code' not in keys:
+    elif 'secret_code' not in keys or req['secret_code'] == None:
         return buildResponse(json.dumps("Missing parameter secret_code"), 400)
     
+    
+    email = req['email']
+    #regex from https://www.geeksforgeeks.org/check-if-email-address-valid-or-not-in-python/
+    regex = re.compile("^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$")
+    if not regex.match(email):
+        return buildResponse(json.dumps("Invalid email"), 400)
+
     # incorrect secrete code to create an account 
     if req['secret_code'].strip() != CREATE_ACCOUNT_CODE:
         return buildResponse(json.dumps("Wrong secret_code"), 401)
@@ -448,7 +586,7 @@ def createAccount():
     for user in users:
         if user.username == req['username']:
             session.close()
-            return buildResponse("Username already registered", 401)
+            return buildResponse("Username already registered", 400)
     session.close()
 
     user = User(req['username'], req['email'], req['password'])
@@ -544,7 +682,64 @@ def logout():
 
     return buildResponse(json.dumps("User successfully logged out"), 200)
 
- 
+
+def email():
+    """
+    This POST endpoint handles user email alert
+    :return: response object
+    """
+    req = request.json
+   
+    keys = req.keys()
+    if 'raw_text' not in keys or req['raw_text'] == "":
+        return buildResponse(json.dumps("Missing parameter raw_text"), 400)
+    elif 'author' not in keys or req['raw_text'] == "":
+        return buildResponse(json.dumps("Missing parameter author"), 400)
+    elif 'source' not in keys or req['source'] not in SOURCES:
+        return buildResponse(json.dumps("Missing parameter source"), 400)
+    elif 'time' not in keys:
+        return buildResponse(json.dumps("Missing parameter time"), 400)
+    
+
+    time = req['time']
+    regex = re.compile("^([2])\d\d\d-(3[0-1]|[0-2][0-9])-([0-2][0-9]|3[0-1]) ([0][0-9]|1[0-9]|2[0-3]):([0-5][0-9]):([0-5][0-9])$")
+    if not regex.match(time):
+        return buildResponse(json.dumps("Invalid time format, must be YYYY-DD-MM HH:MM:SS"), 400)
+
+    #removes emojis that cause a failure when sending email
+    text = req['raw_text'].encode('ascii', 'ignore').decode('ascii')
+    
+    author = req['author']
+    source = req['source']
+   
+    # get list of emails
+    e = pd.read_excel("Email.xlsx")
+    emails = e['Emails'].values
+    
+    try:
+        # set up connetion 
+        server = smtplib.SMTP(EMAIL_SERVER, 587)
+        server.starttls()
+        server.login(SYSTEM_EMAIL_ADDRESS, SYSTEM_EMAIL_PW)
+    except:
+        return  buildResponse(json.dumps({"message": "Error connecting to email server"}), 500)
+    
+    # Create email message. Subject includes 'test' at sponsor's requet
+    msg =  "GEST Alert" + "\n\n" + "Author: " + str(author) + "\n" + "Text: " + str(text) + "\n" \
+                                            + "Source: " + str(source) + "\n" + "Date: " + str(time)
+    subject = "API Test Merck Alert"
+    body = "Subject: {}\n\n{}".format(subject,msg)
+    
+    try:
+        server.sendmail(SYSTEM_EMAIL_ADDRESS, emails, body)
+    except:
+        server.quit()
+        return  buildResponse(json.dumps({"message": "Error sending email"}), 500)
+
+    server.quit()  
+    return  buildResponse(json.dumps({"message": "Email sent"}), 200)
+
+
 def requires_auth(f):
     """
     Wrapper function the requires a JWT bearer token for all endpoints using it.
@@ -571,7 +766,7 @@ def requires_auth(f):
         # if we have a token
         if jwt_token:
             try:
-                token = jwt.decode(jwt_token, JWT_SECRET)
+                token = jwt.decode(jwt_token, JWT_SECRET, algorithms=['HS256'])
                 username = token ['username']
 
                 # confirm session token
@@ -601,4 +796,3 @@ def requires_auth(f):
                 return buildResponse(body=json.dumps({'message': 'Token is expired'}), status=401)
 
     return wrapper
-
