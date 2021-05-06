@@ -1,6 +1,6 @@
 boto3==1.11.16
 Flask==1.0.2
-Flask-Cors==3.0.8
+Flask-Cors==3.0.9
 flask-testing==0.7.1
 pandas==1.0.3
 psycopg2-binary==2.8.4
